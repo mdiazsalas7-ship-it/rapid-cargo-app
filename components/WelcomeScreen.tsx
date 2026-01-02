@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Truck, Package, Loader2, Upload, Mail, Key, ArrowLeft, CheckCircle, FileText } from 'lucide-react';
-import { db, auth, storage } from '@/lib/firebase'; // Importamos storage
+import { Truck, Package, Loader2, Upload, Mail, Key, ArrowLeft, CheckCircle, Building2, User } from 'lucide-react';
+import { db, auth, storage } from '@/lib/firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore'; 
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Funciones para subir
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface WelcomeProps {
   onStart: (role: 'CLIENTE' | 'CHOFER', datos: any) => void;
@@ -22,50 +22,51 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
   // DATOS CLIENTE
   const [esEmpresa, setEsEmpresa] = useState(false);
   const [datosCliente, setDatosCliente] = useState({
-    nombre: '', telefono: '', direccion: '', ruc: '', razonSocial: ''
+    nombre: '', telefono: '', direccion: '', ruc: '', razonSocial: '',
+    urlIdentidad: '' // <--- NUEVO: Foto de Cédula o RIF
   });
 
   // DATOS CHOFER
   const [datosChofer, setDatosChofer] = useState({
     nombre: '', telefono: '', tipoVehiculo: 'MOTO', placa: '', licencia: '',
-    // URLs de las fotos
-    urlLicencia: '',
-    urlRegistro: ''
+    urlLicencia: '', urlRegistro: ''
   });
 
-  // ESTADOS DE CARGA DE IMÁGENES
-  const [uploadingLicencia, setUploadingLicencia] = useState(false);
-  const [uploadingRegistro, setUploadingRegistro] = useState(false);
+  // ESTADO DE CARGA PARA SUBIDAS
+  const [uploading, setUploading] = useState(false);
 
-  // --- FUNCIÓN PARA SUBIR ARCHIVOS ---
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, tipo: 'licencia' | 'registro') => {
+  // --- FUNCIÓN UNIVERSAL DE SUBIDA DE FOTOS ---
+  // Sirve para: 'cliente_id', 'chofer_licencia', 'chofer_registro'
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, destino: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (tipo === 'licencia') setUploadingLicencia(true);
-    else setUploadingRegistro(true);
+    setUploading(true);
 
     try {
-      // 1. Crear referencia (carpeta/nombre_archivo)
-      // Usamos Date.now() para que el nombre sea único
-      const archivoRef = ref(storage, `documentos/${tipo}_${Date.now()}_${file.name}`);
+      // 1. Crear referencia única
+      const archivoRef = ref(storage, `docs/${destino}_${Date.now()}_${file.name}`);
       
       // 2. Subir
       await uploadBytes(archivoRef, file);
       
-      // 3. Obtener URL pública
+      // 3. Obtener URL
       const url = await getDownloadURL(archivoRef);
       
-      // 4. Guardar URL en el estado
-      if (tipo === 'licencia') setDatosChofer(prev => ({ ...prev, urlLicencia: url }));
-      else setDatosChofer(prev => ({ ...prev, urlRegistro: url }));
+      // 4. Guardar URL en el estado correcto según el destino
+      if (destino === 'cliente_id') {
+        setDatosCliente(prev => ({ ...prev, urlIdentidad: url }));
+      } else if (destino === 'chofer_licencia') {
+        setDatosChofer(prev => ({ ...prev, urlLicencia: url }));
+      } else if (destino === 'chofer_registro') {
+        setDatosChofer(prev => ({ ...prev, urlRegistro: url }));
+      }
 
     } catch (error) {
       console.error("Error subiendo:", error);
       alert("Error al subir la imagen. Intenta de nuevo.");
     } finally {
-      if (tipo === 'licencia') setUploadingLicencia(false);
-      else setUploadingRegistro(false);
+      setUploading(false);
     }
   };
 
@@ -92,7 +93,17 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
   };
 
   const handleRegistro = async (rol: 'CLIENTE' | 'CHOFER') => {
-    // VALIDACIÓN IMPORTANTE PARA CHOFERES
+    // --- VALIDACIÓN ESTRICTA (KYC) ---
+    
+    // 1. Validación Cliente
+    if (rol === 'CLIENTE') {
+       if (!datosCliente.urlIdentidad) {
+         alert(esEmpresa ? "Empresas deben subir foto del RIF/Aviso." : "Debes subir foto de tu Cédula/ID.");
+         return;
+       }
+    }
+
+    // 2. Validación Chofer
     if (rol === 'CHOFER') {
       if (!datosChofer.urlLicencia || !datosChofer.urlRegistro) {
         alert("Debes subir las fotos de tus documentos obligatoriamente.");
@@ -110,17 +121,20 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
       if (rol === 'CLIENTE') {
         datosFinales = {
           uid, email, rol: 'CLIENTE', tipo: esEmpresa ? 'EMPRESA' : 'PARTICULAR',
-          ...datosCliente, fecha_registro: new Date().toISOString()
+          ...datosCliente, 
+          documentos_verificados: false, // También entra en revisión si quieres ser estricto
+          fecha_registro: new Date().toISOString()
         };
       } else {
         datosFinales = {
           uid, email, rol: 'CHOFER', ...datosChofer,
-          documentos_verificados: false, fecha_registro: new Date().toISOString()
+          documentos_verificados: false, 
+          fecha_registro: new Date().toISOString()
         };
       }
 
       await setDoc(doc(db, "usuarios", uid), datosFinales);
-      alert("Cuenta creada exitosamente");
+      alert("Cuenta creada. Tus documentos serán revisados.");
       onStart(rol, datosFinales);
 
     } catch (error: any) {
@@ -130,11 +144,9 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
     }
   };
 
-  // ... (VISTAS LOGIN, SELECCION_ROL y REGISTRO_CLIENTE quedan IGUAL que antes. Solo copio la de CHOFER que cambió) ...
-  // Si necesitas el código completo de las otras vistas dímelo, pero para ahorrar espacio asumo que las mantienes.
-  
+  // --- VISTAS ---
+
   if (vista === 'LOGIN') {
-    // ... (CÓDIGO DE LOGIN IGUAL AL ANTERIOR) ...
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <div className="mb-8 text-center animate-in zoom-in duration-500 relative z-10">
@@ -180,13 +192,27 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
           {esEmpresa ? ( <><div><label className="text-xs font-bold text-gray-500">RAZÓN SOCIAL</label><input type="text" onChange={e=>setDatosCliente({...datosCliente, razonSocial: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none" placeholder="Ej. Inversiones S.A."/></div><div><label className="text-xs font-bold text-gray-500">R.U.C / NIT</label><input type="text" onChange={e=>setDatosCliente({...datosCliente, ruc: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none" placeholder="Ej. 15569-22-333"/></div></> ) : ( <div><label className="text-xs font-bold text-gray-500">NOMBRE COMPLETO</label><input type="text" onChange={e=>setDatosCliente({...datosCliente, nombre: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none" placeholder="Ej. Juan Pérez"/></div> )}
           <div><label className="text-xs font-bold text-gray-500">TELÉFONO</label><input type="tel" onChange={e=>setDatosCliente({...datosCliente, telefono: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none" placeholder="+507 6000-0000"/></div>
           <div><label className="text-xs font-bold text-gray-500">DIRECCIÓN {esEmpresa ? 'FISCAL' : 'DE DOMICILIO'}</label><textarea onChange={e=>setDatosCliente({...datosCliente, direccion: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none" rows={2} placeholder="Calle, Edificio, Número..."/></div>
-          <button onClick={() => handleRegistro('CLIENTE')} disabled={loading} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-6">{loading ? <Loader2 className="animate-spin mx-auto"/> : 'FINALIZAR REGISTRO'}</button>
+          
+          {/* SECCIÓN KYC CLIENTE */}
+          <div className={`p-4 rounded-xl border border-dashed transition-colors mt-4 ${datosCliente.urlIdentidad ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-300'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  {esEmpresa ? <Building2 className="w-4 h-4"/> : <User className="w-4 h-4"/>} 
+                  {esEmpresa ? 'Subir Aviso / RIF' : 'Foto Cédula / ID'}
+                </span>
+                {datosCliente.urlIdentidad && <CheckCircle className="w-5 h-5 text-green-500" />}
+              </div>
+              {uploading ? <div className="text-xs text-blue-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin"/> Subiendo...</div> : 
+                <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'cliente_id')} className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-700"/>
+              }
+          </div>
+
+          <button onClick={() => handleRegistro('CLIENTE')} disabled={loading} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-6">{loading ? <Loader2 className="animate-spin mx-auto"/> : 'ENVIAR PARA REVISIÓN'}</button>
         </div>
       </div>
     );
   }
 
-  // VISTA D: FORMULARIO CHOFER (¡AQUÍ ESTÁ LA CARGA DE FOTOS!)
   if (vista === 'REGISTRO_CHOFER') {
     return (
       <div className="min-h-screen bg-white p-6 pb-20 overflow-y-auto animate-in slide-in-from-right">
@@ -217,33 +243,33 @@ export default function WelcomeScreen({ onStart }: WelcomeProps) {
              <div className="flex-1"><label className="text-xs font-bold text-gray-500">LICENCIA</label><input type="text" onChange={e=>setDatosChofer({...datosChofer, licencia: e.target.value})} className="w-full bg-gray-50 p-3 rounded-xl border border-gray-200 outline-none uppercase"/></div>
           </div>
 
-          {/* ÁREA DE CARGA DE DOCUMENTOS REAL */}
+          {/* SECCIÓN KYC CHOFER */}
           <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-300 mt-4 space-y-4">
             <h4 className="font-bold text-slate-700 text-sm flex items-center gap-2"><Upload className="w-4 h-4"/> Documentos Requeridos</h4>
             
-            {/* INPUT FOTO LICENCIA */}
+            {/* FOTO LICENCIA */}
             <div className={`p-3 rounded-lg border transition-colors ${datosChofer.urlLicencia ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-bold text-gray-700">Foto de Licencia</span>
                 {datosChofer.urlLicencia && <CheckCircle className="w-5 h-5 text-green-500" />}
               </div>
-              {uploadingLicencia ? (
+              {uploading ? (
                  <div className="text-xs text-blue-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin"/> Subiendo...</div>
               ) : (
-                <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'licencia')} className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-700"/>
+                <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'chofer_licencia')} className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-700"/>
               )}
             </div>
 
-            {/* INPUT FOTO REGISTRO */}
+            {/* FOTO REGISTRO */}
             <div className={`p-3 rounded-lg border transition-colors ${datosChofer.urlRegistro ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-bold text-gray-700">Registro Vehicular</span>
                 {datosChofer.urlRegistro && <CheckCircle className="w-5 h-5 text-green-500" />}
               </div>
-              {uploadingRegistro ? (
+              {uploading ? (
                  <div className="text-xs text-blue-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin"/> Subiendo...</div>
               ) : (
-                <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'registro')} className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-700"/>
+                <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'chofer_registro')} className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-700"/>
               )}
             </div>
           </div>

@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, where, onSnapshot, updateDoc, doc } from 'firebase/firestore';
-import { Truck, Package, Clock, CheckCircle, Navigation, MapPin, Phone, User, FileText, ShieldCheck } from 'lucide-react';
+import { collection, query, where, onSnapshot, updateDoc, doc, increment } from 'firebase/firestore'; // Agregamos increment
+import { Truck, Package, Clock, CheckCircle, Navigation, MapPin, Phone, User, FileText, ShieldCheck, Star } from 'lucide-react'; // Agregamos Star
 
 interface DashboardProps {
   usuario: any;
@@ -12,12 +12,16 @@ interface DashboardProps {
 interface Viaje { id: string; descripcion_carga: string; distancia_km: number; precio_estimado: number; tipo_vehiculo: string; estado: string; direccion_recogida?: string; direccion_entrega?: string; persona_recibe?: string; telefono_recibe?: string; peso_carga?: string; lat_origen?: number; lng_origen?: number; lat_destino?: number; lng_destino?: number; }
 
 export default function DriverDashboard({ usuario }: DashboardProps) {
-  // 1. PRIMERO DECLARAMOS TODOS LOS ESTADOS (SIEMPRE ARRIBA)
+  // 1. ESTADOS
   const [viajes, setViajes] = useState<Viaje[]>([]);
   const [loading, setLoading] = useState(true);
   const [viajeActivo, setViajeActivo] = useState<Viaje | null>(null);
+  
+  // ESTADOS NUEVOS PARA CALIFICACIÓN
+  const [calificando, setCalificando] = useState(false);
+  const [estrellas, setEstrellas] = useState(0);
 
-  // 2. LUEGO EL EFECTO DE CARGA (SIEMPRE ANTES DE CUALQUIER RETURN)
+  // 2. EFECTO DE CARGA
   useEffect(() => {
     const q = query(collection(db, "viajes"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -42,13 +46,40 @@ export default function DriverDashboard({ usuario }: DashboardProps) {
   }, []);
 
   const aceptarViaje = async (id: string) => {
-    await updateDoc(doc(db, "viajes", id), { estado: "ACEPTADO", chofer_asignado: usuario.nombre });
+    // Al aceptar, guardamos también ID y Nombre del chofer en el viaje
+    await updateDoc(doc(db, "viajes", id), { 
+      estado: "ACEPTADO", 
+      chofer_asignado: usuario.nombre,
+      chofer_id: usuario.uid 
+    });
   };
 
-  const finalizarViaje = async (id: string) => {
-    await updateDoc(doc(db, "viajes", id), { estado: "FINALIZADO" });
+  const finalizarViaje = async () => {
+    // MODIFICADO: En lugar de cerrar directo, abrimos modal de calificación
+    setCalificando(true);
+  };
+
+  // NUEVA FUNCIÓN: Guarda calificación y cierra el viaje
+  const enviarCalificacion = async () => {
+    if (!viajeActivo || estrellas === 0) return;
+    
+    // 1. Finalizar Viaje en DB
+    await updateDoc(doc(db, "viajes", viajeActivo.id), { 
+      estado: "FINALIZADO",
+      calificacion_cliente: estrellas 
+    });
+
+    // 2. Actualizar contador de viajes del Chofer (Estadísticas)
+    if (usuario.uid) {
+        await updateDoc(doc(db, "usuarios", usuario.uid), {
+            viajes_completados: increment(1)
+        });
+    }
+
+    alert("¡Viaje completado exitosamente!");
+    setCalificando(false);
+    setEstrellas(0);
     setViajeActivo(null);
-    alert("¡Viaje finalizado con éxito!");
   };
 
   const abrirGPS = (lat: number, lng: number) => {
@@ -56,7 +87,7 @@ export default function DriverDashboard({ usuario }: DashboardProps) {
     window.open(url, '_blank');
   };
 
-  // 3. AHORA SÍ: EL BLOQUEO DE SEGURIDAD (DESPUÉS DE LOS HOOKS)
+  // 3. BLOQUEO DE SEGURIDAD
   if (!usuario.documentos_verificados) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 text-center">
@@ -82,9 +113,39 @@ export default function DriverDashboard({ usuario }: DashboardProps) {
     );
   }
 
-  // 4. SI PASA EL BLOQUEO, MOSTRAMOS EL DASHBOARD
+  // 4. DASHBOARD (Panel Principal)
   return (
-    <div className="min-h-screen bg-slate-100 p-4 pb-20">
+    <div className="min-h-screen bg-slate-100 p-4 pb-20 relative">
+      
+      {/* --- MODAL DE CALIFICACIÓN --- */}
+      {calificando && (
+        <div className="fixed inset-0 z-50 bg-slate-900/90 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center shadow-2xl">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8 text-green-600" />
+            </div>
+            <h2 className="text-2xl font-black text-slate-900">¡Entrega Exitosa!</h2>
+            <p className="text-gray-500 mb-6 text-sm">El viaje ha finalizado. Por favor califica al cliente:</p>
+            
+            <div className="flex justify-center gap-2 mb-8">
+              {[1,2,3,4,5].map((star) => (
+                <button key={star} onClick={() => setEstrellas(star)} className="transition-transform hover:scale-110 focus:outline-none">
+                  <Star className={`w-10 h-10 ${star <= estrellas ? 'fill-yellow-400 text-yellow-400' : 'text-gray-200'}`} />
+                </button>
+              ))}
+            </div>
+
+            <button 
+              onClick={enviarCalificacion} 
+              disabled={estrellas === 0} 
+              className={`w-full font-bold py-4 rounded-xl transition-all ${estrellas > 0 ? 'bg-slate-900 text-white shadow-lg transform active:scale-95' : 'bg-gray-100 text-gray-400'}`}
+            >
+              FINALIZAR ORDEN
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* HEADER */}
       <div className="bg-slate-900 text-white p-6 rounded-3xl mb-6 shadow-lg relative overflow-hidden">
         <div className="flex justify-between items-center relative z-10">
@@ -97,7 +158,7 @@ export default function DriverDashboard({ usuario }: DashboardProps) {
       </div>
 
       {/* --- MODO VIAJE ACTIVO --- */}
-      {viajeActivo && (
+      {viajeActivo && !calificando && (
         <div className="bg-white rounded-3xl shadow-xl border-2 border-green-500 mb-6 overflow-hidden animate-in zoom-in">
           <div className="bg-green-500 p-4 text-white flex justify-between items-center">
              <h2 className="font-black text-lg flex items-center gap-2"><div className="w-3 h-3 bg-white rounded-full animate-ping"></div> VIAJE EN CURSO</h2>
@@ -127,13 +188,13 @@ export default function DriverDashboard({ usuario }: DashboardProps) {
               </div>
             </div>
             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-sm text-slate-800"><span className="font-bold block text-yellow-700 text-xs uppercase mb-1">Contenido de Carga:</span>{viajeActivo.descripcion_carga} <span className="text-slate-400">({viajeActivo.peso_carga})</span></div>
-            <button onClick={() => finalizarViaje(viajeActivo.id)} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl shadow-lg">FINALIZAR ENTREGA</button>
+            <button onClick={finalizarViaje} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl shadow-lg">FINALIZAR ENTREGA</button>
           </div>
         </div>
       )}
 
       {/* --- LISTA DE CARGAS PENDIENTES --- */}
-      {!viajeActivo && (
+      {!viajeActivo && !calificando && (
         <>
           <h2 className="font-bold text-slate-700 mb-4 px-2">Cargas Disponibles ({viajes.length})</h2>
           <div className="space-y-4">
