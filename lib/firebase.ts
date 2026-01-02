@@ -1,9 +1,10 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth"; // <--- NUEVO
+import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage"; // <--- NUEVO
 
 const firebaseConfig = {
-  // ... TUS CLAVES SIGUEN IGUAL AQUÍ ...
+  // ... TUS CLAVES SIGUEN IGUAL ...
   apiKey: "AIzaSyAZbYofqvt-gL2ZRPvjUlmd8fNyhMQXbFY",
   authDomain: "panavencargo.firebaseapp.com",
   projectId: "panavencargo",
@@ -14,4 +15,5 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
-export const auth = getAuth(app); // <--- NUEVO: Exportamos la seguridad
+export const auth = getAuth(app);
+export const storage = getStorage(app); // <--- NUEVO: Exportamos el Storage
